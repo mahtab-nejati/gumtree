@@ -150,6 +150,7 @@ def projectDescriptions = [
     'gen.antlr4-matlab': 'GumTree abstract AntLR4 module.',
     'gen.c': 'GumTree tree generator for C code. Requires cgum.',
     'gen.css': 'GumTree tree generator for CSS code based on ph-css.',
+    'gen.groovy':'GumTree tree generator for Groovy code (Groovy based).',
     'gen.javaparser': 'GumTree tree generator for Java code (JavaParser based).',
     'gen.jdt': 'GumTree tree generator for Java code (Eclipse JDT based).',
     'gen.js': 'GumTree tree generator for JavaScript code (Rhino based).',

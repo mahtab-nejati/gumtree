@@ -1,0 +1,5 @@
+description = 'GumTree tree generator for Groovy code (Groovy based).'
+
+dependencies {
+	implementation 'org.apache.groovy:groovy:4.0.13'
+}
