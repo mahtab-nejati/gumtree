@@ -29,21 +29,26 @@ import com.github.gumtreediff.tree.Type;
 import com.github.gumtreediff.tree.TreeContext;
 
 import org.codehaus.groovy.ast.ASTNode;
+import org.codehaus.groovy.ast.GroovyCodeVisitor;
 import org.codehaus.groovy.ast.builder.AstBuilder;
 import org.codehaus.groovy.control.CompilationUnit;
 import org.codehaus.groovy.control.ParserPluginFactory;
 import org.codehaus.groovy.control.SourceUnit;
-import org.codehaus.groovy.control.io.StringReaderSource;
-import org.codehaus.groovy.control.messages.SyntaxErrorMessage;
-import org.codehaus.groovy.ast.GroovyCodeVisitor;
 import org.codehaus.groovy.control.CompilationUnit;
 import org.codehaus.groovy.control.SourceUnit;
 import org.codehaus.groovy.control.CompilePhase;
+import org.codehaus.groovy.control.io.StringReaderSource;
+import org.codehaus.groovy.control.messages.SyntaxErrorMessage;
+
 import groovyjarjarantlr4.v4.gui.TestRig;
 import groovyjarjarantlr4.v4.runtime.CharStream;
 import groovyjarjarantlr4.v4.runtime.CharStreams;
 import groovyjarjarantlr4.v4.runtime.CommonTokenStream;
-import groovyjarjarantlr4.v4.runtime.tree.*;
+import groovyjarjarantlr4.v4.runtime.RecognitionException;
+import groovyjarjarantlr4.v4.runtime.RuleContext;
+import groovyjarjarantlr4.v4.runtime.Token;
+import groovyjarjarantlr4.v4.runtime.tree.ParseTree;
+
 import org.apache.groovy.parser.antlr4.GroovyLangLexer;
 import org.apache.groovy.parser.antlr4.GroovyLangParser;
 import groovy.transform.CompileStatic;
@@ -54,6 +59,10 @@ import java.io.Reader;
 import java.io.BufferedReader;
 import java.io.StringWriter;
 import java.io.StringReader;
+import java.util.ArrayDeque;
+import java.util.Arrays;
+import java.util.Deque;
+import java.util.Map;
 import java.util.List;
 import java.lang.reflect.InvocationTargetException;
 
@@ -61,11 +70,12 @@ import static com.github.gumtreediff.tree.TypeSet.type;
 
 @Register(id = "groovy-parser", accept = {"\\.groovy$", "\\.gradle$"}, priority = Registry.Priority.HIGH)
 public class GroovyTreeGenerator extends TreeGenerator {
+    private Deque<Tree> trees = new ArrayDeque<>();
 
     @Override
-    public TreeContext generate(Reader reader) throws IOException {
+    public TreeContext generate(Reader r) throws IOException {
         try {
-            String groovyCode = readReader(reader);
+            String groovyCode = readReader(r);
             // List<ASTNode> astNodes = new AstBuilder().buildFromString(CompilePhase.CONVERSION, groovyCode);
             System.out.println("HERE");
 
@@ -73,15 +83,18 @@ public class GroovyTreeGenerator extends TreeGenerator {
             ParseTree parseTree = gtr.inspectParseTree(groovyCode);
 
             TreeContext context = new TreeContext();
+
+            buildTree(context, parseTree);
+
             return context;
         } catch (Exception e) {
             System.out.println("ERROR");
-            throw new SyntaxException(this, reader, e);
+            throw new SyntaxException(this, r, e);
         }
     }
 
-    public static String readReader(Reader reader) throws IOException {
-        try (BufferedReader in = new BufferedReader(reader)) {
+    public static String readReader(Reader r) throws IOException {
+        try (BufferedReader in = new BufferedReader(r)) {
             char[] cbuf = new char[1024];
             StringBuilder sb = new StringBuilder(1024);
             int bytesRead;
@@ -90,6 +103,105 @@ public class GroovyTreeGenerator extends TreeGenerator {
             }
             return sb.toString();
         }
+    }
+
+    protected String[] getTokenNames() {
+        return GroovyLangParser.tokenNames;
+    }
+
+    protected String[] getRuleNames() {
+        return makeRuleNames();
+    }
+
+    protected Type getTokenName(int tokenType) {
+        String[] names = getTokenNames();
+        if (tokenType < 0 || tokenType >= names.length)
+            return Type.NO_TYPE;
+        return type(names[tokenType]);
+    }
+
+    protected Type getRuleName(int ruleType) {
+        String[] names = getRuleNames();
+        if (ruleType < 0 || ruleType >= names.length)
+            return Type.NO_TYPE;
+        return type(names[ruleType]);
+    }
+
+    @SuppressWarnings("unchecked")
+    protected void buildTree(TreeContext context, ParseTree pt) {
+        Object payload = pt.getPayload(); //makeOrGetType();
+        Type type = null;
+        if (payload instanceof Token)
+            type = getTokenName(((Token)payload).getType());
+        else if (payload instanceof RuleContext)
+            type = getRuleName(((RuleContext)payload).getRuleIndex());
+
+        String label = pt.getText();
+        if (type.name.equals(label)) // FIXME
+            label = Tree.NO_LABEL;
+
+        int start = pt.getSourceInterval().a;
+        int stop = pt.getSourceInterval().b;
+        Tree t = context.createTree(type, label);
+        t.setPos(start);
+        t.setLength(stop - start + 1); // FIXME check if this + 1 make sense ?
+
+        if (trees.isEmpty())
+            context.setRoot(t);
+        else
+            t.setParentAndUpdateChildren(trees.peek());
+
+        if (pt.getChildCount() > 0) {
+            trees.push(t);
+            for (int i = 0; i < pt.getChildCount(); i ++)
+                buildTree(context, pt.getChild(i));
+            trees.pop();
+        }
+    }
+
+    private static String[] makeRuleNames() {
+        return new String[] {
+            "compilationUnit", "scriptStatements", "scriptStatement", "packageDeclaration", 
+            "importDeclaration", "typeDeclaration", "modifier", "modifiersOpt", "modifiers", 
+            "classOrInterfaceModifiersOpt", "classOrInterfaceModifiers", "classOrInterfaceModifier", 
+            "variableModifier", "variableModifiersOpt", "variableModifiers", "typeParameters", 
+            "typeParameter", "typeBound", "typeList", "classDeclaration", "classBody", 
+            "enumConstants", "enumConstant", "classBodyDeclaration", "memberDeclaration", 
+            "methodDeclaration", "compactConstructorDeclaration", "methodName", "returnType", 
+            "fieldDeclaration", "variableDeclarators", "variableDeclarator", "variableDeclaratorId", 
+            "variableInitializer", "variableInitializers", "emptyDims", "emptyDimsOpt", 
+            "standardType", "type", "classOrInterfaceType", "generalClassOrInterfaceType", 
+            "standardClassOrInterfaceType", "primitiveType", "typeArguments", "typeArgument", 
+            "annotatedQualifiedClassName", "qualifiedClassNameList", "formalParameters", 
+            "formalParameterList", "thisFormalParameter", "formalParameter", "methodBody", 
+            "qualifiedName", "qualifiedNameElement", "qualifiedNameElements", "qualifiedClassName", 
+            "qualifiedStandardClassName", "literal", "gstring", "gstringValue", "gstringPath", 
+            "lambdaExpression", "standardLambdaExpression", "lambdaParameters", "standardLambdaParameters", 
+            "lambdaBody", "closure", "closureOrLambdaExpression", "blockStatementsOpt", 
+            "blockStatements", "annotationsOpt", "annotation", "elementValues", "annotationName", 
+            "elementValuePairs", "elementValuePair", "elementValuePairName", "elementValue", 
+            "elementValueArrayInitializer", "block", "blockStatement", "localVariableDeclaration", 
+            "variableDeclaration", "typeNamePairs", "typeNamePair", "variableNames", 
+            "conditionalStatement", "ifElseStatement", "switchStatement", "loopStatement", 
+            "continueStatement", "breakStatement", "yieldStatement", "tryCatchStatement", 
+            "assertStatement", "statement", "catchClause", "catchType", "finallyBlock", 
+            "resources", "resourceList", "resource", "switchBlockStatementGroup", 
+            "switchLabel", "forControl", "enhancedForControl", "classicalForControl", 
+            "forInit", "forUpdate", "castParExpression", "parExpression", "expressionInPar", 
+            "expressionList", "expressionListElement", "enhancedStatementExpression", 
+            "statementExpression", "postfixExpression", "switchExpression", "switchBlockStatementExpressionGroup", 
+            "switchExpressionLabel", "expression", "castOperandExpression", "commandExpression", 
+            "commandArgument", "pathExpression", "pathElement", "namePart", "dynamicMemberName", 
+            "indexPropertyArgs", "namedPropertyArgs", "primary", "namedPropertyArgPrimary", 
+            "namedArgPrimary", "commandPrimary", "list", "map", "mapEntryList", "namedPropertyArgList", 
+            "mapEntry", "namedPropertyArg", "namedArg", "mapEntryLabel", "namedPropertyArgLabel", 
+            "namedArgLabel", "creator", "dim", "arrayInitializer", "anonymousInnerClassDeclaration", 
+            "createdName", "nonWildcardTypeArguments", "typeArgumentsOrDiamond", 
+            "arguments", "argumentList", "enhancedArgumentListInPar", "firstArgumentListElement", 
+            "argumentListElement", "enhancedArgumentListElement", "stringLiteral", 
+            "className", "identifier", "builtInType", "keywords", "rparen", "nls", 
+            "sep"
+        };
     }
 
     @CompileStatic
@@ -106,8 +218,7 @@ public class GroovyTreeGenerator extends TreeGenerator {
                 GroovyLangParser parser = new GroovyLangParser(tokens);
                 ParseTree tree = parser.compilationUnit();
                 String parseTreeString = tree.toStringTree(parser);
-                System.out.println("PARSE TREE");
-                System.out.println(parseTreeString);
+
                 return tree;
             } catch (Exception e) {
                 e.printStackTrace();
