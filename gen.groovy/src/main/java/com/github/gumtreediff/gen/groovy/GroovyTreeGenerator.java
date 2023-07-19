@@ -28,47 +28,48 @@ import com.github.gumtreediff.tree.Tree;
 import com.github.gumtreediff.tree.Type;
 import com.github.gumtreediff.tree.TreeContext;
 
-import org.codehaus.groovy.ast.ASTNode;
-import org.codehaus.groovy.ast.GroovyCodeVisitor;
-import org.codehaus.groovy.ast.builder.AstBuilder;
-import org.codehaus.groovy.control.CompilationUnit;
-import org.codehaus.groovy.control.ParserPluginFactory;
-import org.codehaus.groovy.control.SourceUnit;
-import org.codehaus.groovy.control.CompilationUnit;
-import org.codehaus.groovy.control.SourceUnit;
-import org.codehaus.groovy.control.CompilePhase;
-import org.codehaus.groovy.control.io.StringReaderSource;
-import org.codehaus.groovy.control.messages.SyntaxErrorMessage;
-
 import groovyjarjarantlr4.v4.gui.TestRig;
 import groovyjarjarantlr4.v4.runtime.CharStream;
 import groovyjarjarantlr4.v4.runtime.CharStreams;
 import groovyjarjarantlr4.v4.runtime.CommonTokenStream;
 import groovyjarjarantlr4.v4.runtime.RecognitionException;
 import groovyjarjarantlr4.v4.runtime.RuleContext;
+import groovyjarjarantlr4.v4.runtime.ParserRuleContext;
 import groovyjarjarantlr4.v4.runtime.Token;
 import groovyjarjarantlr4.v4.runtime.tree.ParseTree;
+import groovyjarjarantlr4.v4.gui.TreeViewer;
 
 import org.apache.groovy.parser.antlr4.GroovyLangLexer;
 import org.apache.groovy.parser.antlr4.GroovyLangParser;
 import groovy.transform.CompileStatic;
 
-import java.util.UUID;
+import javax.swing.tree.TreeNode;
+
 import java.io.IOException;
 import java.io.Reader;
 import java.io.BufferedReader;
 import java.io.StringWriter;
 import java.io.StringReader;
+import java.io.BufferedWriter;
+import java.io.FileWriter;
+
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Deque;
 import java.util.Map;
 import java.util.List;
+import java.util.UUID;
+import java.util.ArrayList;
+
 import java.lang.reflect.InvocationTargetException;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatter;
 
 import static com.github.gumtreediff.tree.TypeSet.type;
 
-@Register(id = "groovy-parser", accept = {"\\.groovy$", "\\.gradle$"}, priority = Registry.Priority.HIGH)
+@Register(id = "groovy-parser", accept = { "\\.groovy$", "\\.gradle$" }, priority = Registry.Priority.HIGH)
 public class GroovyTreeGenerator extends TreeGenerator {
     private Deque<Tree> trees = new ArrayDeque<>();
 
@@ -76,14 +77,11 @@ public class GroovyTreeGenerator extends TreeGenerator {
     public TreeContext generate(Reader r) throws IOException {
         try {
             String groovyCode = readReader(r);
-            // List<ASTNode> astNodes = new AstBuilder().buildFromString(CompilePhase.CONVERSION, groovyCode);
-            System.out.println("HERE");
 
             CstInspector gtr = new CstInspector();
             ParseTree parseTree = gtr.inspectParseTree(groovyCode);
-
+            
             TreeContext context = new TreeContext();
-
             buildTree(context, parseTree);
 
             return context;
@@ -127,80 +125,103 @@ public class GroovyTreeGenerator extends TreeGenerator {
         return type(names[ruleType]);
     }
 
-    @SuppressWarnings("unchecked")
     protected void buildTree(TreeContext context, ParseTree pt) {
-        Object payload = pt.getPayload(); //makeOrGetType();
+        Object payload = pt.getPayload(); // makeOrGetType();
         Type type = null;
         if (payload instanceof Token)
-            type = getTokenName(((Token)payload).getType());
+            type = getTokenName(((Token) payload).getType());
         else if (payload instanceof RuleContext)
-            type = getRuleName(((RuleContext)payload).getRuleIndex());
+            type = getRuleName(((RuleContext) payload).getRuleIndex());
 
         String label = pt.getText();
         if (type.name.equals(label)) // FIXME
             label = Tree.NO_LABEL;
 
-        int start = pt.getSourceInterval().a;
-        int stop = pt.getSourceInterval().b;
-        Tree t = context.createTree(type, label);
-        t.setPos(start);
-        t.setLength(stop - start + 1); // FIXME check if this + 1 make sense ?
+        int start = 0;
+        int stop = 0;
 
-        if (trees.isEmpty())
-            context.setRoot(t);
-        else
-            t.setParentAndUpdateChildren(trees.peek());
+        if (payload instanceof Token) {
+            start = ((Token) payload).getStartIndex();
+            stop = ((Token) payload).getStopIndex();
+        } else if (payload instanceof RuleContext) {
+            start = ((ParserRuleContext) payload).getStart().getStartIndex();
+            stop = ((ParserRuleContext) payload).getStop() == null 
+                    ? -1 
+                    : ((ParserRuleContext) payload).getStop().getStopIndex();
+        }
+  
+        Tree t = null; 
+
+        // add rules to ignore others nodes
+        Boolean shouldIncludeInTree = type.toString() != "sep"; // ignore /n node
+        
+        if (shouldIncludeInTree) {
+            t = context.createTree(type, pt.getChildCount() > 0 ? "" : label);
+            t.setPos(start);
+            t.setLength(stop - start + 1);
+
+            if (trees.isEmpty())
+                context.setRoot(t);
+            else
+                t.setParentAndUpdateChildren(trees.peek());
+        }
 
         if (pt.getChildCount() > 0) {
-            trees.push(t);
-            for (int i = 0; i < pt.getChildCount(); i ++)
+            if (shouldIncludeInTree) {
+                trees.push(t);
+            }
+            
+            for (int i = 0; i < pt.getChildCount(); i++)
                 buildTree(context, pt.getChild(i));
-            trees.pop();
+
+            if (shouldIncludeInTree) {
+                trees.pop();
+            }
         }
     }
 
     private static String[] makeRuleNames() {
         return new String[] {
-            "compilationUnit", "scriptStatements", "scriptStatement", "packageDeclaration", 
-            "importDeclaration", "typeDeclaration", "modifier", "modifiersOpt", "modifiers", 
-            "classOrInterfaceModifiersOpt", "classOrInterfaceModifiers", "classOrInterfaceModifier", 
-            "variableModifier", "variableModifiersOpt", "variableModifiers", "typeParameters", 
-            "typeParameter", "typeBound", "typeList", "classDeclaration", "classBody", 
-            "enumConstants", "enumConstant", "classBodyDeclaration", "memberDeclaration", 
-            "methodDeclaration", "compactConstructorDeclaration", "methodName", "returnType", 
-            "fieldDeclaration", "variableDeclarators", "variableDeclarator", "variableDeclaratorId", 
-            "variableInitializer", "variableInitializers", "emptyDims", "emptyDimsOpt", 
-            "standardType", "type", "classOrInterfaceType", "generalClassOrInterfaceType", 
-            "standardClassOrInterfaceType", "primitiveType", "typeArguments", "typeArgument", 
-            "annotatedQualifiedClassName", "qualifiedClassNameList", "formalParameters", 
-            "formalParameterList", "thisFormalParameter", "formalParameter", "methodBody", 
-            "qualifiedName", "qualifiedNameElement", "qualifiedNameElements", "qualifiedClassName", 
-            "qualifiedStandardClassName", "literal", "gstring", "gstringValue", "gstringPath", 
-            "lambdaExpression", "standardLambdaExpression", "lambdaParameters", "standardLambdaParameters", 
-            "lambdaBody", "closure", "closureOrLambdaExpression", "blockStatementsOpt", 
-            "blockStatements", "annotationsOpt", "annotation", "elementValues", "annotationName", 
-            "elementValuePairs", "elementValuePair", "elementValuePairName", "elementValue", 
-            "elementValueArrayInitializer", "block", "blockStatement", "localVariableDeclaration", 
-            "variableDeclaration", "typeNamePairs", "typeNamePair", "variableNames", 
-            "conditionalStatement", "ifElseStatement", "switchStatement", "loopStatement", 
-            "continueStatement", "breakStatement", "yieldStatement", "tryCatchStatement", 
-            "assertStatement", "statement", "catchClause", "catchType", "finallyBlock", 
-            "resources", "resourceList", "resource", "switchBlockStatementGroup", 
-            "switchLabel", "forControl", "enhancedForControl", "classicalForControl", 
-            "forInit", "forUpdate", "castParExpression", "parExpression", "expressionInPar", 
-            "expressionList", "expressionListElement", "enhancedStatementExpression", 
-            "statementExpression", "postfixExpression", "switchExpression", "switchBlockStatementExpressionGroup", 
-            "switchExpressionLabel", "expression", "castOperandExpression", "commandExpression", 
-            "commandArgument", "pathExpression", "pathElement", "namePart", "dynamicMemberName", 
-            "indexPropertyArgs", "namedPropertyArgs", "primary", "namedPropertyArgPrimary", 
-            "namedArgPrimary", "commandPrimary", "list", "map", "mapEntryList", "namedPropertyArgList", 
-            "mapEntry", "namedPropertyArg", "namedArg", "mapEntryLabel", "namedPropertyArgLabel", 
-            "namedArgLabel", "creator", "dim", "arrayInitializer", "anonymousInnerClassDeclaration", 
-            "createdName", "nonWildcardTypeArguments", "typeArgumentsOrDiamond", 
-            "arguments", "argumentList", "enhancedArgumentListInPar", "firstArgumentListElement", 
-            "argumentListElement", "enhancedArgumentListElement", "stringLiteral", 
-            "className", "identifier", "builtInType", "keywords", "rparen", "nls", 
-            "sep"
+                "compilationUnit", "scriptStatements", "scriptStatement", "packageDeclaration",
+                "importDeclaration", "typeDeclaration", "modifier", "modifiersOpt", "modifiers",
+                "classOrInterfaceModifiersOpt", "classOrInterfaceModifiers", "classOrInterfaceModifier",
+                "variableModifier", "variableModifiersOpt", "variableModifiers", "typeParameters",
+                "typeParameter", "typeBound", "typeList", "classDeclaration", "classBody",
+                "enumConstants", "enumConstant", "classBodyDeclaration", "memberDeclaration",
+                "methodDeclaration", "compactConstructorDeclaration", "methodName", "returnType",
+                "fieldDeclaration", "variableDeclarators", "variableDeclarator", "variableDeclaratorId",
+                "variableInitializer", "variableInitializers", "emptyDims", "emptyDimsOpt",
+                "standardType", "type", "classOrInterfaceType", "generalClassOrInterfaceType",
+                "standardClassOrInterfaceType", "primitiveType", "typeArguments", "typeArgument",
+                "annotatedQualifiedClassName", "qualifiedClassNameList", "formalParameters",
+                "formalParameterList", "thisFormalParameter", "formalParameter", "methodBody",
+                "qualifiedName", "qualifiedNameElement", "qualifiedNameElements", "qualifiedClassName",
+                "qualifiedStandardClassName", "literal", "gstring", "gstringValue", "gstringPath",
+                "lambdaExpression", "standardLambdaExpression", "lambdaParameters", "standardLambdaParameters",
+                "lambdaBody", "closure", "closureOrLambdaExpression", "blockStatementsOpt",
+                "blockStatements", "annotationsOpt", "annotation", "elementValues", "annotationName",
+                "elementValuePairs", "elementValuePair", "elementValuePairName", "elementValue",
+                "elementValueArrayInitializer", "block", "blockStatement", "localVariableDeclaration",
+                "variableDeclaration", "typeNamePairs", "typeNamePair", "variableNames",
+                "conditionalStatement", "ifElseStatement", "switchStatement", "loopStatement",
+                "continueStatement", "breakStatement", "yieldStatement", "tryCatchStatement",
+                "assertStatement", "statement", "catchClause", "catchType", "finallyBlock",
+                "resources", "resourceList", "resource", "switchBlockStatementGroup",
+                "switchLabel", "forControl", "enhancedForControl", "classicalForControl",
+                "forInit", "forUpdate", "castParExpression", "parExpression", "expressionInPar",
+                "expressionList", "expressionListElement", "enhancedStatementExpression",
+                "statementExpression", "postfixExpression", "switchExpression", "switchBlockStatementExpressionGroup",
+                "switchExpressionLabel", "expression", "castOperandExpression", "commandExpression",
+                "commandArgument", "pathExpression", "pathElement", "namePart", "dynamicMemberName",
+                "indexPropertyArgs", "namedPropertyArgs", "primary", "namedPropertyArgPrimary",
+                "namedArgPrimary", "commandPrimary", "list", "map", "mapEntryList", "namedPropertyArgList",
+                "mapEntry", "namedPropertyArg", "namedArg", "mapEntryLabel", "namedPropertyArgLabel",
+                "namedArgLabel", "creator", "dim", "arrayInitializer", "anonymousInnerClassDeclaration",
+                "createdName", "nonWildcardTypeArguments", "typeArgumentsOrDiamond",
+                "arguments", "argumentList", "enhancedArgumentListInPar", "firstArgumentListElement",
+                "argumentListElement", "enhancedArgumentListElement", "stringLiteral",
+                "className", "identifier", "builtInType", "keywords", "rparen", "nls",
+                "sep"
         };
     }
 
