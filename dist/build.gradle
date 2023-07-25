@@ -14,6 +14,7 @@ dependencies {
 	implementation project(':gen.antlr3-xml')
 	implementation project(':gen.c')
 	implementation project(':gen.css')
+	implementation project(':gen.groovy')
 	implementation project(':gen.javaparser')
 	implementation project(':gen.jdt')
 	implementation project(':gen.js')
