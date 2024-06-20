@@ -35,14 +35,14 @@ public abstract class AbstractTree implements Tree {
 
     @Override
     public String toString() {
-        String jsonString = "GumTreeType: " + getType() ;
+        String jsonString = "GumTreeNodeType: " + getType() ;
         if (hasLabel()) { 
-            jsonString = jsonString + " GumTreeContent: " + getLabel();
+            jsonString = jsonString + " GumTreeNodeContent: " + getLabel();
         } else {
-            jsonString = jsonString + " GumTreeContent: " + "";
+            jsonString = jsonString + " GumTreeNodeContent: " + "";
         }
-        jsonString = jsonString + " GumTreeSPos: " + getPos();
-        jsonString = jsonString + " GumTreeEPos: " + getEndPos();
+        jsonString = jsonString + " GumTreeNodeSPos: " + getPos();
+        jsonString = jsonString + " GumTreeNodeEPos: " + getEndPos();
 
         return jsonString;
     }
